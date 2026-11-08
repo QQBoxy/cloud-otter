@@ -33,8 +33,7 @@
         {
           "binding": "DB",
           "database_name": "cloud-otter-production",
-          // Replace with the production D1 database ID before deploying.
-          "database_id": "00000000-0000-0000-0000-000000000002"
+          "database_id": "594c49b0-e42b-4176-9318-5412f5763d73"
         }
       ],
       "ratelimits": [
