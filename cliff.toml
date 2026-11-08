@@ -1,0 +1,23 @@
+[changelog]
+body = '''
+{% for group, commits in commits | group_by(attribute="group") %}
+## {{ group }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first }}
+{% endfor %}
+{% endfor %}
+'''
+trim = true
+
+[git]
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+$'
+conventional_commits = true
+filter_unconventional = false
+commit_parsers = [
+  { message = "^feat", group = "新功能" },
+  { message = "^fix", group = "問題修正" },
+  { message = "^docs", group = "文件" },
+  { message = "^perf", group = "效能" },
+  { message = "^Merge ", skip = true },
+  { message = ".*", group = "其他變更" },
+]

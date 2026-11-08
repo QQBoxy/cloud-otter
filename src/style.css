@@ -1,0 +1,68 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #233530;
+  background: #f3f7f5;
+  --el-color-primary: #176753;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+.page {
+  width: min(100% - 2rem, 44rem);
+  margin: 2rem auto;
+}
+
+.login-page {
+  max-width: 26rem;
+  margin-top: clamp(2rem, 14vh, 8rem);
+  padding: 1.5rem;
+  border: 1px solid #d6e4de;
+  border-radius: .75rem;
+  background: white;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+}
+
+.page-header h1,
+.login-page h1 { margin: 0 0 1rem; }
+
+.page-header h2 { font-size: 1.125rem; }
+
+.el-alert { margin-bottom: 1rem; }
+
+.panel {
+  background: white;
+  border: 1px solid #d6e4de;
+  border-radius: .75rem;
+  padding: 1rem;
+}
+
+.announcements {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: .75rem;
+}
+
+.announcement-text {
+  margin: 0 0 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.actions .el-button + .el-button { margin-left: 0; }
