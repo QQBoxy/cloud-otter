@@ -1,0 +1,8 @@
+# 複製成 .dev.vars，再填入兩個不同的地端測試帳號。
+ADMIN_1_USERNAME=
+ADMIN_1_PASSWORD_HASH=
+ADMIN_2_USERNAME=
+ADMIN_2_PASSWORD_HASH=
+
+# 用 openssl rand -hex 32 產生金鑰。
+SESSION_KEY=

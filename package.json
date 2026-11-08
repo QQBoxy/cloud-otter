@@ -1,0 +1,39 @@
+{
+  "name": "cloud-otter",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.21.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "vite build && vite build --mode login",
+    "dev": "pnpm build && X_LOCAL_EXPLORER=false wrangler dev --local --ip 127.0.0.1",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "hash-password": "node scripts/hash-password.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "node --test test/unit.test.ts",
+    "test:integration": "pnpm build && node --test test/integration.test.ts",
+    "test": "pnpm test:unit && pnpm test:integration"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4",
+    "element-plus": "^2.14.8",
+    "hono": "^4.13.17",
+    "vue": "^3.5.45"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "eslint": "^10.14.0",
+    "eslint-plugin-vue": "^10.12.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.6",
+    "vue-eslint-parser": "^10.4.2",
+    "vue-tsc": "^3.3.14",
+    "wrangler": "^4.158.0"
+  }
+}
