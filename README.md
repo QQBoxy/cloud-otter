@@ -6,7 +6,7 @@
 
 ## 地端啟動
 
-需要 Node.js 24 以上與 pnpm。Wrangler 會啟動本機 Worker 與 D1，資料保留在 `.wrangler/state`。
+macOS 與 Windows 11 x64 都可使用下列流程。需要 Node.js 24 以上與 pnpm 10.21.0。Wrangler 會啟動本機 Worker 與 D1，資料保留在 `.wrangler/state`。
 
 1. 執行 `pnpm install`。
 2. 執行下列指令，貼上地端測試密碼，再按 Enter 取得雜湊。輸入時密碼會隱藏。兩個測試帳號各執行一次。
@@ -15,15 +15,25 @@
    pnpm hash-password
    ```
 
-3. 在專案根目錄複製範本，再填入兩個不同帳號、各自的密碼雜湊，以及用 `openssl rand -hex 32` 產生的 Session 金鑰。
+3. 如果專案根目錄還沒有 `.dev.vars`，先複製範本。
 
    ```sh
    cp -n .dev.vars.example .dev.vars
    ```
 
+   Windows PowerShell 使用 `Copy-Item .dev.vars.example .dev.vars`。
+
+   在 `.dev.vars` 填入兩個不同帳號、各自的密碼雜湊，以及用下列指令產生的 Session 金鑰。
+
+   ```sh
+   node -p "require('node:crypto').randomBytes(32).toString('hex')"
+   ```
+
 4. 執行 `pnpm db:local` 套用 migration，再執行 `pnpm dev`，用瀏覽器開啟 [http://127.0.0.1:8787](http://127.0.0.1:8787)。
 
 ## 驗證
+
+單元測試和整合測試都在本機執行。GitHub Actions 執行型別檢查、Lint 和正式部署。
 
 ```sh
 pnpm typecheck
