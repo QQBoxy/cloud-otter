@@ -45,11 +45,8 @@ pnpm test
 
 ## Release Notes
 
-正式部署驗收後，把版本標籤加到實際上線的 `main` commit，再推送標籤。以 `v0.1.0` 為例。
+正式部署成功後，GitHub Actions 會用 git-cliff 根據 commit 訊息計算版號，把標籤加到已上線的 commit，並建立 GitHub Release 草稿。第一個版本是 `v0.1.0`。之後 `feat:` 會升次版本、`fix:` 會升修補版，重大變更會升主版本。只有 `ci:`、`docs:` 或 `chore:` 的變更會跳過升版。
 
-```sh
-git tag v0.1.0 <上線的 commit SHA>
-git push origin v0.1.0
-```
+驗收後，在 GitHub 的 Releases 頁面確認草稿內容，再按 **Publish release** 發布。
 
-GitHub Actions 會用 git-cliff 整理該版本的 commit，並建立 GitHub Release 草稿。在 GitHub 的 Releases 頁面確認內容後即可發佈。合併 PR 時，可用 `feat:`、`fix:`、`docs:` 或 `perf:` 當作 commit 訊息的開頭，讓變更自動分類。
+修改發版流程後，在本機執行 `bash test/release-draft.test.sh`，檢查標籤與草稿的建立和重跑行為。
