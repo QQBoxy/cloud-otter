@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createHmac } from 'node:crypto'
-import { once } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
+import { unstable_startWorker } from 'wrangler'
+import '../scripts/dev-env.ts'
 import { MAX_ANNOUNCEMENTS } from '../worker/announcement-input.ts'
 import { hashPassword } from '../worker/password.ts'
 
 const run = promisify(execFile)
-const wrangler = resolve('node_modules/.bin/wrangler')
+const wrangler = 'node_modules/wrangler/bin/wrangler.js'
 const environment = {
   ...process.env,
   WRANGLER_SEND_METRICS: 'false',
-  X_LOCAL_EXPLORER: 'false',
   CI: 'true',
 }
 const testPassword = 'test-only announcement password'
@@ -25,7 +25,14 @@ test('Worker protects assets and two administrators share the same D1 announceme
   const directory = await mkdtemp(join(tmpdir(), 'cloud-otter-test-'))
   const envFile = join(directory, 'test.env')
   const state = join(directory, 'state')
-  t.after(() => rm(directory, { recursive: true, force: true }))
+  let worker: Awaited<ReturnType<typeof unstable_startWorker>> | undefined = undefined
+  t.after(async () => {
+    try {
+      await worker?.dispose()
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 })
+    }
+  })
 
   const [firstHash, secondHash] = await Promise.all([hashPassword(testPassword), hashPassword(testPassword)])
   await writeFile(envFile, [
@@ -37,41 +44,25 @@ test('Worker protects assets and two administrators share the same D1 announceme
   ].join('\n'), { mode: 0o600 })
 
   const wranglerOptions = { env: { ...environment, WRANGLER_LOG_PATH: join(directory, 'wrangler.log') } }
-  await run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--local', '--persist-to', state], wranglerOptions)
+  await run(process.execPath, [wrangler, 'd1', 'migrations', 'apply', 'DB', '--local', '--persist-to', state], wranglerOptions)
   const expiredToken = '00'.repeat(32)
   const expiredHash = createHmac('sha256', Buffer.from(sessionKey, 'hex')).update(expiredToken).digest('hex')
-  await run(wrangler, ['d1', 'execute', 'DB', '--local', '--persist-to', state, '--command',
+  await run(process.execPath, [wrangler, 'd1', 'execute', 'DB', '--local', '--persist-to', state, '--command',
     `INSERT INTO sessions VALUES ('${expiredHash}', 'test-one', 1)`,
   ], wranglerOptions)
 
-  const worker = spawn(wrangler, [
-    'dev', '--local', '--ip', '127.0.0.1', '--port', '0', '--inspector-port', '0',
-    '--persist-to', state, '--env-file', envFile, '--show-interactive-dev-session=false',
-  ], { ...wranglerOptions, stdio: ['ignore', 'pipe', 'pipe'] })
-  const exited = once(worker, 'exit')
-  let output = ''
-  const origin = await new Promise<string>((done, fail) => {
-    const timer = setTimeout(() => fail(new Error('Worker 未啟動\n' + output)), 15_000)
-    const collect = (chunk: Buffer) => {
-      output += chunk.toString()
-      const address = output.match(/Ready on (http:\/\/127\.0\.0\.1:\d+)/)?.[1]
-      if (address) {
-        clearTimeout(timer)
-        done(address)
-      }
-    }
-    worker.stdout.on('data', collect)
-    worker.stderr.on('data', collect)
-    worker.once('exit', () => {
-      clearTimeout(timer)
-      fail(new Error('Worker 提早結束\n' + output))
-    })
-    t.after(async () => {
-      clearTimeout(timer)
-      if (worker.exitCode === null && worker.signalCode === null) worker.kill()
-      await exited
-    })
+  worker = await unstable_startWorker({
+    config: 'wrangler.jsonc',
+    envFiles: [envFile],
+    dev: {
+      remote: false,
+      server: { hostname: '127.0.0.1', port: 0 },
+      inspector: { port: 0 },
+      persist: state,
+      logLevel: 'warn',
+    },
   })
+  const origin = (await worker.url).origin
 
   const request = (path: string, method = 'GET', cookie?: string, body?: object, source = origin) =>
     fetch(origin + path, {
