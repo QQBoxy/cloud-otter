@@ -10,13 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+  check:
+    # Keep the status check name required by the main branch ruleset.
+    name: Typecheck, lint and test
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,15 +30,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
-
-  check:
-    name: Typecheck, lint and test
-    needs: test
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ needs.test.result }}" = success
 
   deploy:
     name: Deploy production

@@ -33,6 +33,8 @@ macOS 與 Windows 11 x64 都可使用下列流程。需要 Node.js 24 以上與 
 
 ## 驗證
 
+單元測試和整合測試都在本機執行。GitHub Actions 執行型別檢查、Lint 和正式部署。
+
 ```sh
 pnpm typecheck
 pnpm lint
