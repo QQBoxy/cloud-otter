@@ -2,6 +2,13 @@ import { createMiddleware } from 'hono/factory'
 import type { WorkerEnv } from './http.ts'
 import { authenticate, unauthorized } from './sessions.ts'
 
+const publicPwaAssets = new Set([
+  '/manifest.webmanifest',
+  '/service-worker.js',
+  '/icons/otter-192.png',
+  '/icons/otter-512.png',
+])
+
 export const requireSession = createMiddleware<WorkerEnv>(async (c, next) => {
   const url = new URL(c.req.url)
   const method = c.req.method
@@ -12,6 +19,7 @@ export const requireSession = createMiddleware<WorkerEnv>(async (c, next) => {
   }
 
   if (
+    (['GET', 'HEAD'].includes(method) && publicPwaAssets.has(path)) ||
     (method === 'GET' && (path === '/login' || path === '/api/health' ||
       /^\/login-assets\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$/.test(path))) ||
     (method === 'POST' && path === '/api/sessions')

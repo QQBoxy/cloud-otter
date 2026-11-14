@@ -87,7 +87,23 @@ test('Worker protects assets and two administrators share the same D1 announceme
   const home = await status('/', 302)
   assert.equal(home.headers.get('location'), '/login')
   const page = await status('/login', 200)
-  const publicAsset = (await page.text()).match(/src="(\/login-assets\/[^"]+)"/)?.[1]
+  const loginHtml = await page.text()
+  assert.match(loginHtml, /rel="manifest" href="\/manifest\.webmanifest"/)
+  const manifest = await status('/manifest.webmanifest', 200)
+  const { start_url, scope, icons } = await manifest.json() as {
+    start_url: string; scope: string; icons: { src: string; sizes: string }[]
+  }
+  assert.equal(start_url, '/')
+  assert.equal(scope, '/')
+  assert.deepEqual(icons.map(({ sizes }) => sizes), ['192x192', '512x512'])
+  for (const icon of icons) {
+    assert.equal((await status(icon.src, 200)).headers.get('content-type'), 'image/png')
+  }
+  const serviceWorker = await status('/service-worker.js', 200)
+  assert.match(serviceWorker.headers.get('content-type') ?? '', /javascript/i)
+  assert.equal(serviceWorker.headers.get('cache-control'), 'no-store')
+  await status('/icons/private.js', 401)
+  const publicAsset = loginHtml.match(/src="(\/login-assets\/[^"]+)"/)?.[1]
   assert.ok(publicAsset)
   await status(publicAsset, 200)
   await status('/api/health', 200)
