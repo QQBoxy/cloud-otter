@@ -89,6 +89,9 @@ test('Worker protects assets and two administrators share the same D1 announceme
   const page = await status('/login', 200)
   const loginHtml = await page.text()
   assert.match(loginHtml, /rel="manifest" href="\/manifest\.webmanifest"/)
+  const favicon = /rel="icon"[^>]+href="\/icons\/otter-32\.png"/
+  assert.match(loginHtml, favicon)
+  assert.equal((await status('/icons/otter-32.png', 200)).headers.get('content-type'), 'image/png')
   const manifest = await status('/manifest.webmanifest', 200)
   const { start_url, scope, icons } = await manifest.json() as {
     start_url: string; scope: string; icons: { src: string; sizes: string }[]
@@ -133,7 +136,7 @@ test('Worker protects assets and two administrators share the same D1 announceme
   const first = setCookie.split(';')[0]
   const second = secondLogin.headers.get('set-cookie')!.split(';')[0]
   assert.equal((await status(privateAsset, 200, first)).headers.get('cache-control'), 'no-store')
-  await status('/', 200, first)
+  assert.match(await (await status('/', 200, first)).text(), favicon)
   assert.equal((await status('/api/sessions/current', 200, second).then((r) => r.json()) as { username: string }).username, 'test-two')
 
   const collection = '/api/announcements'

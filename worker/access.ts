@@ -5,6 +5,7 @@ import { authenticate, unauthorized } from './sessions.ts'
 const publicPwaAssets = new Set([
   '/manifest.webmanifest',
   '/service-worker.js',
+  '/icons/otter-32.png',
   '/icons/otter-192.png',
   '/icons/otter-512.png',
 ])
