@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "海獺公告欄",
+  "short_name": "海獺公告欄",
+  "lang": "zh-Hant-TW",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f7f5",
+  "theme_color": "#176753",
+  "icons": [
+    { "src": "/icons/otter-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/otter-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
