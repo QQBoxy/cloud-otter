@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 export const sessionTable = sqliteTable('sessions', {
   tokenHash: text('token_hash').primaryKey(),
@@ -26,10 +26,9 @@ export const announcementRevisionTable = sqliteTable('announcement_revision', {
 
 export const transactionTable = sqliteTable('transactions', {
   id: integer().primaryKey({ autoIncrement: true }),
-  item: text().notNull(),
-  amountCents: integer('amount_cents').notNull(),
+  name: text().notNull(),
+  price: real().notNull(),
   occurredAt: text('occurred_at').notNull(),
   taipeiMonth: text('taipei_month').notNull(),
-  legacyId: text('legacy_id').unique(),
   deleted: integer({ mode: 'boolean' }).notNull().default(false),
 }, (table) => [index('transactions_month').on(table.deleted, table.taipeiMonth, table.occurredAt, table.id)])

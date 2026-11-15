@@ -1,16 +1,15 @@
 export type Transaction = {
   id: number
-  item: string
-  amountCents: number
+  name: string
+  price: number
   occurredAt: string
-  legacyId: string | null
 }
 
-export type MonthTotal = { month: string; count: number; amountCents: number }
-export type YearSummary = { year: string; count: number; amountCents: number; months: MonthTotal[] }
-export type TransactionPage = { data: Transaction[]; total: number; amountCents: number }
+export type MonthTotal = { month: string; count: number; price: number }
+export type YearSummary = { year: string; count: number; price: number; months: MonthTotal[] }
+export type TransactionPage = { data: Transaction[]; total: number; price: number }
 
-export const MAX_AMOUNT_CENTS = 999_999_999_999
+export const MAX_PRICE = 9_999_999_999.99
 export const TRANSACTIONS_PER_PAGE = 10
 
 const calendar = new Intl.DateTimeFormat('en-CA', {

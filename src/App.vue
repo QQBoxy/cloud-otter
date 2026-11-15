@@ -2,13 +2,14 @@
 import { onMounted, ref } from 'vue'
 import { ElButton } from 'element-plus'
 import 'element-plus/es/components/button/style/css'
-import { board, features, menu, navigation, pages } from '../shared/pages.ts'
+import { board, features, menu, navigation, pages, transactionPage, transactionTotalPage } from '../shared/pages.ts'
 import AnnouncementsPage from './AnnouncementsPage.vue'
 import BoardPage from './BoardPage.vue'
 import LedgerPage from './LedgerPage.vue'
 import { ApiError, renewalPath, request } from './request'
 
 const current = pages.find(({ path }) => path === window.location.pathname) ?? board
+const activePage = current.path === transactionTotalPage.path ? transactionPage : current
 const error = ref('')
 const signingOut = ref(false)
 document.title = current.label + ' · 海獺盒子'
@@ -52,14 +53,14 @@ onMounted(async () => {
         v-for="page in navigation"
         :key="page.path"
         :href="page.path"
-        :aria-current="page.path === current.path ? 'page' : undefined"
+        :aria-current="page.path === activePage.path ? 'page' : undefined"
       >{{ page.label }}</a>
     </nav>
     <div class="app-content">
       <p v-if="error" class="page" role="alert">{{ error }}</p>
       <BoardPage v-if="current.path === board.path" />
       <AnnouncementsPage v-else-if="current.path === '/announcements'" />
-      <LedgerPage v-else-if="current.path === '/ledger'" />
+      <LedgerPage v-else-if="activePage.path === transactionPage.path" />
       <main v-else class="page">
         <h1>功能表</h1>
         <ul class="feature-list">

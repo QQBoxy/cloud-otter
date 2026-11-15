@@ -4,6 +4,7 @@ import { createHmac } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { unstable_startWorker } from 'wrangler'
@@ -21,6 +22,32 @@ const environment = {
 }
 const testPassword = 'test-only announcement password'
 const sessionKey = 'ab'.repeat(32)
+
+test('The transaction migration preserves old rows, price precision and issued IDs', async () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec(await readFile('migrations/0003_transactions.sql', 'utf8'))
+    db.exec(`
+      INSERT INTO transactions (id, item, amount_cents, occurred_at, taipei_month, legacy_id, deleted) VALUES
+        (2, ' 超市 ', 6000, '2026-10-01T01:15:30.000Z', '2026-10', 'lineboxy:42', 0),
+        (3, '零食', 1250, '2026-11-01T02:30:00.000Z', '2026-11', NULL, 0),
+        (4, '已刪除', 1, '', '', 'lineboxy:43', 1),
+        (8, '已移除', 5000, '2026-11-02T02:30:00.000Z', '2026-11', NULL, 0);
+      DELETE FROM transactions WHERE id = 8;
+    `)
+    db.exec(await readFile('migrations/0004_transaction_name_and_price.sql', 'utf8'))
+    db.prepare('INSERT INTO transactions (name, price, occurred_at, taipei_month) VALUES (?, ?, ?, ?)')
+      .run('新交易', 60, '2026-11-03T02:30:00.000Z', '2026-11')
+    assert.deepEqual(db.prepare('SELECT * FROM transactions ORDER BY id').all().map((row) => ({ ...row })), [
+      { id: 2, name: ' 超市 ', price: 60, occurred_at: '2026-10-01T01:15:30.000Z', taipei_month: '2026-10', deleted: 0 },
+      { id: 3, name: '零食', price: 12.5, occurred_at: '2026-11-01T02:30:00.000Z', taipei_month: '2026-11', deleted: 0 },
+      { id: 4, name: '已刪除', price: 0.01, occurred_at: '', taipei_month: '', deleted: 1 },
+      { id: 9, name: '新交易', price: 60, occurred_at: '2026-11-03T02:30:00.000Z', taipei_month: '2026-11', deleted: 0 },
+    ])
+  } finally {
+    db.close()
+  }
+})
 
 test('Worker protects assets and two administrators share announcements and expenses', { timeout: 60_000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'cloud-otter-test-'))
@@ -93,6 +120,8 @@ test('Worker protects assets and two administrators share announcements and expe
   assert.equal((await status('/announcements', 302)).headers.get('location'), '/login')
   assert.equal((await status('/menu', 302)).headers.get('location'), '/login')
   assert.equal((await status('/ledger', 302)).headers.get('location'), '/login')
+  assert.equal((await status('/transaction', 302)).headers.get('location'), '/login')
+  assert.equal((await status('/transaction/total', 302)).headers.get('location'), '/login')
   const page = await status('/login', 200)
   const loginHtml = await page.text()
   assert.match(loginHtml, /<title>管理員登入 · 海獺盒子<\/title>/)
@@ -124,6 +153,7 @@ test('Worker protects assets and two administrators share announcements and expe
   await status('/api/announcements?view=recent', 401)
   await status('/api/transactions', 401)
   await status('/api/transactions/summary', 401)
+  await status('/api/transactions/years', 401)
   const explorer = await request('/cdn-cgi/local/explorer/api/d1/database')
   assert.ok([401, 404].includes(explorer.status), 'local D1 explorer must be inaccessible')
   await status('/index.html', 401)
@@ -167,7 +197,9 @@ test('Worker protects assets and two administrators share announcements and expe
   assert.match(await (await status('/', 200, first)).text(), favicon)
   assert.match(await (await status('/announcements', 200, second)).text(), favicon)
   assert.match(await (await status('/menu', 200, second)).text(), favicon)
-  assert.match(await (await status('/ledger', 200, second)).text(), favicon)
+  assert.equal((await status('/ledger?month=2026-11', 308, second)).headers.get('location'), '/transaction?month=2026-11')
+  assert.match(await (await status('/transaction', 200, second)).text(), favicon)
+  assert.match(await (await status('/transaction/total', 200, second)).text(), favicon)
   assert.equal((await status('/api/sessions/current', 200, second).then((r) => r.json()) as { username: string }).username, 'test-two')
 
   const collection = '/api/announcements'
@@ -233,10 +265,10 @@ test('Worker protects assets and two administrators share announcements and expe
   assert.deepEqual(await recent(), allAnnouncements.slice(0, 5))
 
   const expenses = '/api/transactions'
-  const newExpense = { item: '早餐', amountCents: 4567, occurredAt: '2026-12-31T15:59:59.999Z' }
+  const newExpense = { name: '早餐', price: 45.67, occurredAt: '2026-12-31T15:59:59.999Z' }
   assert.equal((await request(expenses, 'POST', first, newExpense, 'https://example.com')).status, 403)
   assert.equal((await request(expenses, 'POST', first, { ...newExpense, occurredAt: '2027-02-30T00:00:00Z' })).status, 400)
-  assert.equal((await request(expenses, 'POST', first, { ...newExpense, amountCents: 0.1 })).status, 400)
+  assert.equal((await request(expenses, 'POST', first, { ...newExpense, price: 0.001 })).status, 400)
   await status(expenses + '?month=2026-13', 400, second)
   const entry = await request(expenses, 'POST', first, newExpense)
   assert.equal(entry.status, 201)
@@ -247,27 +279,27 @@ test('Worker protects assets and two administrators share announcements and expe
   const totals = async (year: string) =>
     (await status(expenses + '/summary?year=' + year, 200, second)).json() as Promise<YearSummary>
   assert.deepEqual(await (await status(expensePath, 200, second)).json(), (await records('2026-12'))[0])
-  assert.deepEqual((await totals('2026')).months[11], { month: '2026-12', count: 1, amountCents: 4567 })
+  assert.deepEqual((await totals('2026')).months[11], { month: '2026-12', count: 1, price: 45.67 })
 
-  const oldExpense = { item: ' 超市 ', amountCents: 12345, occurredAt: '2027-01-01T00:00:00+08:00', legacyId: 'lineboxy:42' }
-  const imports = await Promise.all([first, second].map((cookie) => request(expenses, 'POST', cookie, oldExpense)))
-  assert.deepEqual(imports.map(({ status }) => status).sort(), [200, 201])
-  const importedPath = imports[0]!.headers.get('location')!
-  assert.equal(imports[1]!.headers.get('location'), importedPath)
+  const oldExpense = { name: ' 超市 ', price: 123.45, occurredAt: '2027-01-01T00:00:00+08:00' }
+  assert.equal((await request(expenses, 'POST', first, { ...oldExpense, legacyId: 'lineboxy:42' })).status, 400)
+  const imported = await request(expenses, 'POST', first, oldExpense)
+  assert.equal(imported.status, 201)
+  const importedPath = imported.headers.get('location')!
   assert.deepEqual(await records('2027-01'), [{
     ...oldExpense, id: Number(importedPath.split('/').at(-1)), occurredAt: '2026-12-31T16:00:00.000Z',
   }])
+  assert.deepEqual(await (await status(expenses + '/years', 200, second)).json(), ['2027', '2026'])
   assert.equal((await request(expensePath, 'PATCH', second, { occurredAt: '2026-12-31T16:00:00Z' })).status, 200)
-  assert.equal((await totals('2026')).amountCents, 0)
+  assert.equal((await totals('2026')).price, 0)
   const annual = await totals('2027')
-  assert.equal(annual.amountCents, 16912)
+  assert.equal(annual.price, 169.12)
   assert.equal(annual.count, 2)
   assert.equal(annual.months.length, 12)
-  assert.equal((await request(importedPath, 'PATCH', second, { amountCents: 100 })).status, 200)
-  assert.equal((await request(expenses, 'POST', first, oldExpense)).status, 200)
-  assert.equal((await totals('2027')).amountCents, 4667)
+  assert.equal((await request(importedPath, 'PATCH', second, { price: 1 })).status, 200)
+  assert.equal((await totals('2027')).price, 46.67)
   assert.equal((await request(importedPath, 'DELETE', second)).status, 204)
-  assert.equal((await request(expenses, 'POST', first, oldExpense)).status, 409)
+  await status(importedPath, 404, first)
   assert.equal((await request(expensePath, 'DELETE', second)).status, 204)
   await status(expensePath, 404, first)
   assert.equal((await totals('2027')).count, 0)
@@ -276,7 +308,7 @@ test('Worker protects assets and two administrators share announcements and expe
   const ids = []
   for (let index = 1; index <= 11; index++) {
     const added = await request(expenses, 'POST', first, {
-      item: '分頁測試 ' + index, amountCents: index * 100, occurredAt: '2027-02-01T00:00:00+08:00',
+      name: '分頁測試 ' + index, price: index, occurredAt: '2027-02-01T00:00:00+08:00',
     })
     assert.equal(added.status, 201)
     ids.unshift(Number(added.headers.get('location')?.split('/').at(-1)))
@@ -287,14 +319,14 @@ test('Worker protects assets and two administrators share announcements and expe
   assert.deepEqual(lastPage.data.map(({ id }) => id), ids.slice(10))
   assert.equal(firstPage.total, 11)
   assert.equal(lastPage.total, 11)
-  assert.equal(firstPage.amountCents, 6600)
-  assert.equal(lastPage.amountCents, 6600)
+  assert.equal(firstPage.price, 66)
+  assert.equal(lastPage.price, 66)
   assert.deepEqual((await expensePage(pageMonth, '&offset=1&limit=2')).data.map(({ id }) => id), ids.slice(1, 3))
-  assert.deepEqual(await expensePage(pageMonth, '&offset=20'), { data: [], total: 11, amountCents: 6600 })
+  assert.deepEqual(await expensePage(pageMonth, '&offset=20'), { data: [], total: 11, price: 66 })
   await status(expenses + '?month=' + pageMonth + '&offset=-1', 400, first)
   await status(expenses + '?month=' + pageMonth + '&limit=101', 400, first)
   assert.equal((await request(expenses + '/' + ids.at(-1), 'DELETE', second)).status, 204)
-  assert.deepEqual(await expensePage(pageMonth, '&offset=10'), { data: [], total: 10, amountCents: 6500 })
+  assert.deepEqual(await expensePage(pageMonth, '&offset=10'), { data: [], total: 10, price: 65 })
 
   assert.equal((await request('/api/sessions/current', 'DELETE', first)).status, 204)
   await status(collection, 401, first)

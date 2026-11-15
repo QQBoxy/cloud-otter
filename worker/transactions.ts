@@ -1,7 +1,7 @@
-import { and, between, count, desc, eq, isNotNull, isNull, sum } from 'drizzle-orm'
+import { and, between, count, desc, eq, sum } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { Hono } from 'hono'
-import { MAX_AMOUNT_CENTS, taipeiDate, TRANSACTIONS_PER_PAGE, type TransactionPage, type YearSummary } from '../shared/ledger.ts'
+import { MAX_PRICE, taipeiDate, TRANSACTIONS_PER_PAGE, type TransactionPage, type YearSummary } from '../shared/ledger.ts'
 import { jsonObject, type WorkerEnv } from './http.ts'
 import { transactionTable as table } from './schema.ts'
 
@@ -13,10 +13,9 @@ const itemPath = '/:id{[1-9][0-9]*}'
 const active = eq(table.deleted, false)
 const fields = {
   id: table.id,
-  item: table.item,
-  amountCents: table.amountCents,
+  name: table.name,
+  price: table.price,
   occurredAt: table.occurredAt,
-  legacyId: table.legacyId,
 }
 
 function byId(id: string) {
@@ -35,17 +34,22 @@ function transactionTime(value: unknown) {
   return { occurredAt, taipeiMonth }
 }
 
+function readPrice(value: string | null | undefined) {
+  return Number(Number(value ?? 0).toFixed(2))
+}
+
 function transactionValues(input: Record<string, unknown>, partial = false) {
-  const { item, amountCents, occurredAt } = input
-  const values: Partial<Pick<typeof table.$inferInsert, 'item' | 'amountCents' | 'occurredAt' | 'taipeiMonth'>> = {}
-  if (!partial || 'item' in input) {
-    if (typeof item !== 'string' || !item.trim() || item.includes('\0') || item.length > 500) return
-    values.item = item
+  if (Object.keys(input).some((key) => !['name', 'price', 'occurredAt'].includes(key))) return
+  const { name, price, occurredAt } = input
+  const values: Partial<Pick<typeof table.$inferInsert, 'name' | 'price' | 'occurredAt' | 'taipeiMonth'>> = {}
+  if (!partial || 'name' in input) {
+    if (typeof name !== 'string' || !name.trim() || name.includes('\0') || name.length > 500) return
+    values.name = name
   }
-  if (!partial || 'amountCents' in input) {
-    if (typeof amountCents !== 'number' || !Number.isInteger(amountCents) ||
-      amountCents < 1 || amountCents > MAX_AMOUNT_CENTS) return
-    values.amountCents = amountCents
+  if (!partial || 'price' in input) {
+    if (typeof price !== 'number' || !Number.isFinite(price) ||
+      price < 0.01 || price > MAX_PRICE || Number(price.toFixed(2)) !== price) return
+    values.price = price
   }
   if (!partial || 'occurredAt' in input) {
     const time = transactionTime(occurredAt)
@@ -73,9 +77,9 @@ transactions.get('/', async (c) => {
   const [data, [totals]] = await db.batch([
     db.select(fields).from(table).where(inMonth)
       .orderBy(desc(table.occurredAt), desc(table.id)).limit(limit).offset(offset),
-    db.select({ total: count(), amountCents: sum(table.amountCents) }).from(table).where(inMonth),
+    db.select({ total: count(), price: sum(table.price) }).from(table).where(inMonth),
   ])
-  const page: TransactionPage = { data, total: totals?.total ?? 0, amountCents: Number(totals?.amountCents ?? 0) }
+  const page: TransactionPage = { data, total: totals?.total ?? 0, price: readPrice(totals?.price) }
   return c.json(page)
 })
 
@@ -86,51 +90,46 @@ transactions.get('/summary', async (c) => {
   const rows = await drizzle(c.env.DB).select({
     month: table.taipeiMonth,
     count: count(),
-    amountCents: sum(table.amountCents),
+    price: sum(table.price),
   }).from(table).where(and(active, between(table.taipeiMonth, year + '-01', year + '-12')))
     .groupBy(table.taipeiMonth)
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = year + '-' + String(index + 1).padStart(2, '0')
     const row = rows.find((entry) => entry.month === month)
-    return { month, count: row?.count ?? 0, amountCents: Number(row?.amountCents ?? 0) }
+    return { month, count: row?.count ?? 0, price: readPrice(row?.price) }
   })
   const summary: YearSummary = {
     year,
     months,
     count: months.reduce((total, month) => total + month.count, 0),
-    amountCents: months.reduce((total, month) => total + month.amountCents, 0),
+    price: Number(months.reduce((total, month) => total + month.price, 0).toFixed(2)),
   }
   return c.json(summary)
+})
+
+transactions.get('/years', async (c) => {
+  const months = await drizzle(c.env.DB).selectDistinct({ month: table.taipeiMonth }).from(table)
+    .where(active).orderBy(desc(table.taipeiMonth))
+  return c.json([...new Set(months.map(({ month }) => month.slice(0, 4)))])
 })
 
 transactions.post('/', async (c) => {
   const input = await jsonObject(c)
   const values = transactionValues(input)
-  const { legacyId } = input
-  if (values?.item === undefined || values.amountCents === undefined ||
-    values.occurredAt === undefined || values.taipeiMonth === undefined ||
-    (legacyId !== undefined && (typeof legacyId !== 'string' || !legacyId.trim() || legacyId.length > 256))) {
-    return c.json({ error: '請確認品項、金額、交易時間與舊交易識別碼的格式。' }, 400)
+  if (values?.name === undefined || values.price === undefined ||
+    values.occurredAt === undefined || values.taipeiMonth === undefined) {
+    return c.json({ error: '請確認品項、金額與交易時間的格式。' }, 400)
   }
 
-  const db = drizzle(c.env.DB)
-  const created = await db.insert(table).values({
-    item: values.item,
-    amountCents: values.amountCents,
+  const created = await drizzle(c.env.DB).insert(table).values({
+    name: values.name,
+    price: values.price,
     occurredAt: values.occurredAt,
     taipeiMonth: values.taipeiMonth,
-    legacyId,
-  }).onConflictDoNothing({ target: table.legacyId }).returning(fields).get()
-  if (created) {
-    c.header('Location', '/api/transactions/' + created.id)
-    return c.json(created, 201)
-  }
-
-  if (typeof legacyId !== 'string') throw new Error('Transaction insert returned no row')
-  const existing = await db.select(fields).from(table).where(and(active, eq(table.legacyId, legacyId))).get()
-  if (!existing) return c.json({ error: '這筆舊交易已匯入並刪除。' }, 409)
-  c.header('Location', '/api/transactions/' + existing.id)
-  return c.json(existing)
+  }).returning(fields).get()
+  if (!created) throw new Error('Transaction insert returned no row')
+  c.header('Location', '/api/transactions/' + created.id)
+  return c.json(created, 201)
 })
 
 transactions.get(itemPath, async (c) => {
@@ -141,7 +140,7 @@ transactions.get(itemPath, async (c) => {
 transactions.patch(itemPath, async (c) => {
   const input = await jsonObject(c)
   const values = transactionValues(input, true)
-  if (!values || !Object.keys(values).length || 'legacyId' in input) {
+  if (!values || !Object.keys(values).length) {
     return c.json({ error: '請提供有效的品項、金額或交易時間。' }, 400)
   }
 
@@ -151,15 +150,8 @@ transactions.patch(itemPath, async (c) => {
 })
 
 transactions.delete(itemPath, async (c) => {
-  const db = drizzle(c.env.DB)
-  const item = byId(c.req.param('id'))
-  const [removed, marked] = await db.batch([
-    db.delete(table).where(and(item, isNull(table.legacyId))),
-    // Reserve imported IDs so rerunning a source import cannot restore deleted items.
-    db.update(table).set({ deleted: true, item: '已刪除', amountCents: 1, occurredAt: '', taipeiMonth: '' })
-      .where(and(item, isNotNull(table.legacyId))),
-  ])
-  return removed.meta.changes || marked.meta.changes
+  const { meta } = await drizzle(c.env.DB).delete(table).where(byId(c.req.param('id'))).run()
+  return meta.changes
     ? c.body(null, 204)
     : c.json({ error: '找不到這筆支出。' }, 404)
 })

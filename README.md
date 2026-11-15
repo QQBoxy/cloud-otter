@@ -41,7 +41,7 @@ pnpm lint
 pnpm test
 ```
 
-整合測試會在暫存目錄啟動獨立的本機 Worker 和 D1，驗證共用帳本、跨月跨年、交易去重與登入續期。瀏覽器驗收時，可用兩個不同的瀏覽器工作階段登入，確認公告排序與記帳資料共用。
+整合測試會在暫存目錄啟動獨立的本機 Worker 和 D1，驗證共用帳本、跨月跨年和登入續期。瀏覽器驗收時，可用兩個不同的瀏覽器工作階段登入，確認公告排序與記帳資料共用。
 
 ## 加入主畫面
 
@@ -49,11 +49,11 @@ pnpm test
 
 ## 交易 API
 
-- `GET /api/transactions?month=2026-11&offset=0&limit=10` 查詢台灣時間的月明細。回傳當頁的 `data`、整月筆數 `total` 和整月支出 `amountCents`。預設從第 0 筆開始，每頁 10 筆，最多 100 筆。同一交易時間依交易 ID 由新到舊排列。
-- `GET /api/transactions/summary?year=2026` 回傳全年和各月的筆數及金額。
-- `POST /api/transactions` 新增一筆支出。送出 `item` 品項、`amountCents` 整數分，以及 `occurredAt` 含時區的 ISO 8601 交易時間，精度至毫秒。
+- `GET /api/transactions?month=2026-11&offset=0&limit=10` 查詢台灣時間的月明細。回傳當頁的 `data`、整月筆數 `total` 和整月支出 `price`（新台幣元）。預設從第 0 筆開始，每頁 10 筆，最多 100 筆。同一交易時間依交易 ID 由新到舊排列。
+- 記帳頁位於 `/transaction`，年度統計位於 `/transaction/total`。切換年份或月份會直接更新資料。
+- `GET /api/transactions/summary?year=2026` 回傳全年和各月的筆數及金額。記帳頁以 `GET /api/transactions/years` 取得已有交易的年份，並加上當年。
+- `POST /api/transactions` 新增一筆支出。送出 `name` 品項和 `price` 金額（新台幣元，最多兩位小數），以及 `occurredAt` 含時區的 ISO 8601 交易時間，精度至毫秒。
 - `GET`、`PATCH`、`DELETE /api/transactions/:id` 分別讀取、修改、刪除個別支出。
-- 匯入時由同一個交易 API 接收額外的 `legacyId`。新交易回傳 `201`，重送同一識別碼會回傳既有交易與 `200`。若該交易曾刪除，回傳 `409`。可用各年摘要加總總筆數，並逐月核對筆數及金額。
 - 呼叫 API 須先登入。寫入需帶同源的 `Origin`，API 用戶端可另外呼叫 `POST /api/sessions/current/renewals` 更新目前的登入效期。
 
 ## Release Notes

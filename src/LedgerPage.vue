@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElAlert, ElButton, ElEmpty, ElPopconfirm } from 'element-plus'
 import 'element-plus/es/components/alert/style/css'
 import 'element-plus/es/components/button/style/css'
 import 'element-plus/es/components/empty/style/css'
 import 'element-plus/es/components/popconfirm/style/css'
-import { MAX_AMOUNT_CENTS, taipeiDate, TRANSACTIONS_PER_PAGE, type Transaction, type TransactionPage, type YearSummary } from '../shared/ledger.ts'
+import { taipeiDate, TRANSACTIONS_PER_PAGE, type Transaction, type TransactionPage, type YearSummary } from '../shared/ledger.ts'
+import { transactionPage, transactionTotalPage } from '../shared/pages.ts'
 import { ApiError, request } from './request'
+import { parsePrice, transactionCollection as collection } from './transactions'
 
-const collection = '/api/transactions'
 const today = () => taipeiDate(new Date())
 const month = ref(today().slice(0, 7))
-const yearInput = ref(month.value.slice(0, 4))
-const monthInput = ref(month.value.slice(5))
+const availableYears = ref<string[]>([])
+const selectedYear = computed(() => month.value.slice(0, 4))
+const years = computed(() => [...new Set([today().slice(0, 4), selectedYear.value, ...availableYears.value])].sort().reverse())
 const summary = ref<YearSummary | null>(null)
-const records = ref<TransactionPage>({ data: [], total: 0, amountCents: 0 })
+const records = ref<TransactionPage>({ data: [], total: 0, price: 0 })
 const page = ref(1)
 const pageSize = TRANSACTIONS_PER_PAGE
 const pageCount = (total: number) => Math.max(1, Math.ceil(total / pageSize))
@@ -29,18 +31,18 @@ const visiblePages = computed(() => {
 })
 const loadedMonth = ref('')
 const view = ref<'entries' | 'stats'>('entries')
-const blankDraft = () => ({ item: '', amount: '', day: today() })
+const blankDraft = () => ({ name: '', price: '', day: today() })
 const newDraft = ref(blankDraft())
 const editDraft = ref<(ReturnType<typeof blankDraft> & { id: number; originalDay: string }) | null>(null)
 const draft = computed(() => editDraft.value ?? newDraft.value)
-const itemInput = ref<HTMLInputElement | null>(null)
+const nameInput = ref<HTMLInputElement | null>(null)
 const heading = ref<HTMLElement | null>(null)
 const busy = ref(false)
 const error = ref('')
 const money = new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2 })
 const dateOf = (entry: Transaction) => taipeiDate(new Date(entry.occurredAt))
-const formatMoney = (cents: number) => 'NT$' + money.format(cents / 100)
-const maxMonth = computed(() => Math.max(1, ...(summary.value?.months.map((row) => row.amountCents) ?? [])))
+const formatMoney = (price: number) => 'NT$' + money.format(price)
+const maxMonth = computed(() => Math.max(1, ...(summary.value?.months.map((row) => row.price) ?? [])))
 
 async function load(requestedPage = page.value) {
   if (view.value === 'entries') {
@@ -81,29 +83,50 @@ async function run(action: () => Promise<void>) {
 function setMonth(value: string) {
   if (value !== month.value) loadedMonth.value = ''
   month.value = value
-  yearInput.value = value.slice(0, 4)
-  monthInput.value = value.slice(5)
 }
 
-function selectMonth(value: string, showEntries = false) {
+function periodUrl(nextView: typeof view.value, value: string) {
+  return nextView === 'stats'
+    ? transactionTotalPage.path + '?year=' + value.slice(0, 4)
+    : transactionPage.path + '?month=' + value
+}
+
+function readRoute() {
+  const url = new URL(window.location.href)
+  view.value = url.pathname === transactionTotalPage.path ? 'stats' : 'entries'
+  const year = url.searchParams.get('year')
+  const value = view.value === 'stats'
+    ? year && year + month.value.slice(4)
+    : url.searchParams.get('month')
+  setMonth(value && /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value) ? value : today().slice(0, 7))
+  document.title = (view.value === 'stats' ? transactionTotalPage.label : transactionPage.label) + ' · 海獺盒子'
+  loadedMonth.value = ''
+}
+
+function changePeriod(event: Event, unit: 'year' | 'month') {
+  const value = (event.target as HTMLSelectElement).value
   return run(async () => {
-    if (!/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('請輸入四位數的年份。')
-    setMonth(value)
-    if (showEntries) {
-      view.value = 'entries'
-      loadedMonth.value = ''
-    }
+    setMonth(unit === 'year' ? value + month.value.slice(4) : selectedYear.value + '-' + value)
+    window.history.replaceState(null, '', periodUrl(view.value, month.value))
     await load(1)
   })
 }
 
-function switchView(nextView: typeof view.value) {
-  if (view.value === nextView) return
+function switchView(nextView: typeof view.value, value = month.value) {
   return run(async () => {
-    view.value = nextView
-    loadedMonth.value = ''
+    window.history.pushState(null, '', periodUrl(nextView, value))
+    readRoute()
     await load(1)
   })
+}
+
+function handleHistory() {
+  if (busy.value) {
+    window.location.reload()
+    return
+  }
+  readRoute()
+  void run(() => load(1))
 }
 
 function goToPage(target: number) {
@@ -113,9 +136,9 @@ function goToPage(target: number) {
 
 async function openEdit(entry: Transaction) {
   const day = dateOf(entry)
-  editDraft.value = { id: entry.id, originalDay: day, item: entry.item, amount: (entry.amountCents / 100).toFixed(2), day }
+  editDraft.value = { id: entry.id, originalDay: day, name: entry.name, price: entry.price.toString(), day }
   await nextTick()
-  itemInput.value?.focus()
+  nameInput.value?.focus()
 }
 
 async function closeEdit() {
@@ -128,17 +151,17 @@ function save() {
   return run(async () => {
     const editing = editDraft.value
     const form = draft.value
-    const amount = form.amount.trim()
-    const amountCents = Math.round(Number(amount) * 100)
-    if (!/^\d+(\.\d{1,2})?$/.test(amount) || amountCents < 1 || amountCents > MAX_AMOUNT_CENTS) {
-      throw new Error('請輸入大於 0 的金額，最多兩位小數。')
-    }
-    const item = editing ? form.item : form.item.trim()
+    const price = parsePrice(form.price)
+    const name = editing ? form.name : form.name.trim()
+    const now = new Date()
+    const occurredAt = !editing && form.day === taipeiDate(now)
+      ? now.toISOString()
+      : form.day + 'T00:00:00+08:00'
     const body = {
-      item,
-      amountCents,
+      name,
+      price,
       // Preserve an imported time when the user edits only the item or amount.
-      ...(form.day !== editing?.originalDay && { occurredAt: form.day + 'T00:00:00+08:00' }),
+      ...(form.day !== editing?.originalDay && { occurredAt }),
     }
     const response = editing
       ? await request(collection + '/' + editing.id, 'PATCH', body)
@@ -147,6 +170,8 @@ function save() {
     const savedMonth = dateOf(entry).slice(0, 7)
     const targetPage = editing && month.value === savedMonth ? page.value : 1
     setMonth(savedMonth)
+    if (!availableYears.value.includes(selectedYear.value)) availableYears.value.push(selectedYear.value)
+    window.history.replaceState(null, '', periodUrl('entries', savedMonth))
     if (!editing) newDraft.value = blankDraft()
     await closeEdit()
     loadedMonth.value = ''
@@ -162,13 +187,25 @@ function remove(id: number) {
   })
 }
 
-onMounted(() => run(load))
+readRoute()
+onMounted(() => {
+  window.addEventListener('popstate', handleHistory)
+  return run(async () => {
+    await Promise.all([
+      load(),
+      request(collection + '/years').then(async (response) => {
+        availableYears.value = await response.json<string[]>()
+      }),
+    ])
+  })
+})
+onUnmounted(() => window.removeEventListener('popstate', handleHistory))
 </script>
 
 <template>
   <main class="page management-page ledger" :aria-busy="busy">
     <header class="page-header management-heading">
-      <h1 ref="heading" tabindex="-1">記帳</h1>
+      <h1 ref="heading" tabindex="-1">{{ view === 'entries' ? '記帳' : '年度統計' }}</h1>
       <ElButton
         :disabled="busy || !!editDraft"
         @click="switchView(view === 'entries' ? 'stats' : 'entries')"
@@ -179,36 +216,39 @@ onMounted(() => run(load))
 
     <form v-if="view === 'entries'" class="panel panel-form ledger-form" @submit.prevent="save">
       <h2>{{ editDraft ? '編輯支出' : '新增支出' }}</h2>
-      <label class="form-field">品項 <input ref="itemInput" v-model="draft.item" required maxlength="500" :disabled="busy"></label>
-      <label class="form-field">金額（NT$） <input v-model="draft.amount" inputmode="decimal" required :disabled="busy"></label>
+      <label class="form-field">品項 <input ref="nameInput" v-model="draft.name" required maxlength="500" :disabled="busy"></label>
+      <label class="form-field">金額（NT$） <input v-model="draft.price" inputmode="decimal" required :disabled="busy"></label>
       <label class="form-field">交易日期 <input v-model="draft.day" type="date" min="1000-01-01" max="9999-12-31" required :disabled="busy"></label>
       <div class="actions">
         <ElButton
           type="primary"
           native-type="submit"
           :loading="busy"
-          :disabled="!draft.item.trim() || !draft.amount.trim() || !draft.day"
+          :disabled="!draft.name.trim() || !draft.price.trim() || !draft.day"
         >{{ editDraft ? '儲存' : '新增' }}</ElButton>
         <ElButton v-if="editDraft" :disabled="busy" @click="closeEdit">取消</ElButton>
       </div>
     </form>
 
-    <form class="ledger-period" @submit.prevent="selectMonth(yearInput + '-' + monthInput)">
-      <label class="form-field">年份 <input v-model="yearInput" type="text" inputmode="numeric" pattern="[1-9][0-9]{3}" maxlength="4" required :disabled="busy || !!editDraft"></label>
+    <div class="ledger-period">
+      <label class="form-field">年份
+        <select :value="selectedYear" :disabled="busy || !!editDraft" @change="changePeriod($event, 'year')">
+          <option v-for="year in years" :key="year" :value="year">{{ year }}</option>
+        </select>
+      </label>
       <label v-if="view === 'entries'" class="form-field">月份
-        <select v-model="monthInput" :disabled="busy || !!editDraft">
+        <select :value="month.slice(5)" :disabled="busy || !!editDraft" @change="changePeriod($event, 'month')">
           <option v-for="n in 12" :key="n" :value="String(n).padStart(2, '0')">{{ n }} 月</option>
         </select>
       </label>
-      <ElButton native-type="submit" :disabled="busy || !!editDraft">查詢</ElButton>
-    </form>
+    </div>
 
     <p v-if="busy && loadedMonth !== month" role="status">載入中…</p>
     <template v-if="loadedMonth === month">
       <section v-if="view === 'entries'" aria-labelledby="monthly-heading">
         <div class="page-header management-section-heading">
           <h2 id="monthly-heading">{{ month }} 支出</h2>
-          <strong>{{ formatMoney(records.amountCents) }}</strong>
+          <strong>{{ formatMoney(records.price) }}</strong>
         </div>
         <ElEmpty v-if="records.data.length === 0" description="這個月還沒有支出。" />
         <table v-else class="record-table ledger-table" role="table">
@@ -219,8 +259,8 @@ onMounted(() => run(load))
           <tbody role="rowgroup">
             <tr v-for="entry in records.data" :key="entry.id" role="row">
               <td role="cell">{{ dateOf(entry) }}</td>
-              <td role="cell">{{ entry.item }}</td>
-              <td role="cell">{{ formatMoney(entry.amountCents) }}</td>
+              <td role="cell">{{ entry.name }}</td>
+              <td role="cell">{{ formatMoney(entry.price) }}</td>
               <td class="ledger-row-actions" role="cell">
                 <div class="actions record-actions">
                   <ElButton :disabled="busy || !!editDraft" @click="openEdit(entry)">編輯</ElButton>
@@ -262,15 +302,15 @@ onMounted(() => run(load))
       <section v-else-if="summary" aria-labelledby="yearly-heading">
         <div class="panel ledger-total">
           <h2 id="yearly-heading">{{ summary.year }} 年支出合計</h2>
-          <strong>{{ formatMoney(summary.amountCents) }}</strong>
+          <strong>{{ formatMoney(summary.price) }}</strong>
         </div>
         <h2>每月支出趨勢</h2>
         <ol class="panel ledger-trend">
           <li v-for="(row, index) in summary.months" :key="row.month">
-            <button type="button" :disabled="busy" @click="selectMonth(row.month, true)">
+            <button type="button" :disabled="busy" @click="switchView('entries', row.month)">
               <span>{{ index + 1 }} 月</span>
-              <span class="ledger-track" aria-hidden="true"><span :style="{ width: (100 * row.amountCents / maxMonth) + '%' }"></span></span>
-              <span>{{ formatMoney(row.amountCents) }}</span>
+              <span class="ledger-track" aria-hidden="true"><span :style="{ width: (100 * row.price / maxMonth) + '%' }"></span></span>
+              <span>{{ formatMoney(row.price) }}</span>
             </button>
           </li>
         </ol>
@@ -284,7 +324,6 @@ onMounted(() => run(load))
 .ledger-total h2, .ledger-total + h2 { font-size: 1.125rem; margin: 0; }
 .ledger .management-section-heading { flex-wrap: wrap; }
 .ledger-period { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
-.ledger-period input { width: 6rem; }
 @media (min-width: 43rem) {
   .ledger-form { grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); }
   .ledger-form h2, .ledger-form .actions { grid-column: 1 / -1; }

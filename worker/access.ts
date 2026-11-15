@@ -1,5 +1,5 @@
 import { createMiddleware } from 'hono/factory'
-import { pages } from '../shared/pages.ts'
+import { legacyLedgerPath, pages } from '../shared/pages.ts'
 import type { WorkerEnv } from './http.ts'
 import { authenticate, unauthorized } from './sessions.ts'
 
@@ -32,7 +32,7 @@ export const requireSession = createMiddleware<WorkerEnv>(async (c, next) => {
   if (await authenticate(c)) return next()
 
   const isPage = !path.startsWith('/api/') &&
-    (pages.some((page) => page.path === path) || c.req.header('Sec-Fetch-Dest') === 'document' ||
+    (path === legacyLedgerPath || pages.some((page) => page.path === path) || c.req.header('Sec-Fetch-Dest') === 'document' ||
       c.req.header('Accept')?.includes('text/html'))
   return method === 'GET' && isPage ? c.redirect('/login') : unauthorized(c)
 })
