@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
-import { pages } from '../shared/pages.ts'
+import { legacyLedgerPath, pages, transactionPage } from '../shared/pages.ts'
 import { requireSession } from './access.ts'
 import { announcements } from './announcements.ts'
 import type { WorkerEnv } from './http.ts'
@@ -34,6 +34,7 @@ app.route('/api/sessions', sessions)
 app.route('/api/announcements', announcements)
 app.route('/api/transactions', transactions)
 
+app.get(legacyLedgerPath, (c) => c.redirect(transactionPage.path + new URL(c.req.url).search, 308))
 for (const { path } of pages) {
   app.get(path, (c) => asset(c, '/index.html'))
 }
