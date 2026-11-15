@@ -1,4 +1,4 @@
-import { and, eq, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, lt, sql } from 'drizzle-orm'
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1'
 import { Hono } from 'hono'
 import { announcementText, MAX_ANNOUNCEMENTS, orderInput } from './announcement-input.ts'
@@ -9,7 +9,7 @@ export const announcements = new Hono<WorkerEnv>()
 const itemPath = '/:id{[1-9][0-9]*}'
 const fields = { id: announcementTable.id, text: announcementTable.text }
 const board = eq(announcementRevisionTable.id, 1)
-// New items share the last position and are ordered by their generated ID.
+// Keep the required legacy position column populated.
 const appendPosition = Number.MAX_SAFE_INTEGER
 
 function byId(id: string) {
@@ -19,20 +19,20 @@ function byId(id: string) {
 async function readBoard(db: DrizzleD1Database) {
   const [[snapshot], items] = await db.batch([
     db.select().from(announcementRevisionTable).where(board),
-    db.select(fields).from(announcementTable).orderBy(announcementTable.position, announcementTable.id),
+    db.select(fields).from(announcementTable).orderBy(desc(announcementTable.id)),
   ])
   if (!snapshot) throw new Error('Announcement revision is missing')
 
-  // Keep the existing position order for older data and items added since the last reorder.
+  // Show new items first in creation order, then keep the explicit order of the others.
   const positions = new Map(snapshot.orderedIds.map((id, position) => [id, position]))
-  const rank = (id: number) => positions.get(id) ?? MAX_ANNOUNCEMENTS
+  const rank = (id: number) => positions.get(id) ?? -1
   items.sort((first, second) => rank(first.id) - rank(second.id))
   return { snapshot, items }
 }
 
 announcements.get('/', async (c) => {
   const { items } = await readBoard(drizzle(c.env.DB))
-  return c.json(items)
+  return c.json(c.req.query('view') === 'recent' ? items.slice(0, 5) : items)
 })
 
 announcements.post('/', async (c) => {
@@ -50,7 +50,7 @@ announcements.post('/', async (c) => {
     db.insert(announcementTable).select(newItem).returning(fields),
     db.update(announcementRevisionTable).set({ revision: crypto.randomUUID() }).where(board),
   ])
-  if (!item) return c.json({ error: '公告欄已滿，請先刪除一則公告。' }, 409)
+  if (!item) return c.json({ error: '公告已達上限，請先刪除一則。' }, 409)
   c.header('Location', '/api/announcements/' + item.id)
   return c.json(item, 201)
 })

@@ -30,7 +30,7 @@ async function login() {
 
 <template>
   <main class="page login-page">
-    <h1>管理員登入</h1>
+    <h1>海獺盒子登入</h1>
     <ElAlert v-if="error" :title="error" type="error" :closable="false" />
     <ElForm label-position="top" @submit.prevent="login">
       <ElFormItem label="帳號" for="username">

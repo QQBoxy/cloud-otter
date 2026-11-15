@@ -79,6 +79,7 @@ jobs:
 
           version_tag="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           pnpm exec wrangler versions upload --env production --tag "$version_tag"
+          pnpm exec wrangler d1 migrations apply DB --remote --env production
           pnpm exec wrangler versions deploy --env production --version-tag "$version_tag" --yes
           echo 'deployed=true' >> "$GITHUB_OUTPUT"
 

@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { createHmac, randomBytes } from 'node:crypto'
-import { and, eq, gt, lte, or } from 'drizzle-orm'
+import { and, eq, gt, gte, lt, lte, or } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
@@ -12,7 +12,7 @@ import { sessionTable } from './schema.ts'
 export const sessions = new Hono<WorkerEnv>()
 const cookie = '__Host-session'
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'Lax', path: '/' } as const
-const sessionAge = 8 * 60 * 60
+const sessionAge = 7 * 24 * 60 * 60
 const tokenPattern = /^[0-9a-f]{64}$/
 
 function tokenHash(token: string, key: string) {
@@ -93,6 +93,25 @@ sessions.post('/', async (c) => {
 })
 
 sessions.get('/current', (c) => c.json(c.get('session')))
+
+sessions.post('/current/renewals', async (c) => {
+  const now = Date.now()
+  const expiresAt = now + sessionAge * 1000
+  const db = drizzle(c.env.DB)
+  const session = eq(sessionTable.tokenHash, c.get('tokenHash'))
+  const { meta } = await db.update(sessionTable).set({ expiresAt })
+    .where(and(session, gt(sessionTable.expiresAt, now), lt(sessionTable.expiresAt, expiresAt)))
+    .run()
+  if (!meta.changes) {
+    // A concurrent renewal may already have set a later expiration.
+    const active = await db.select({ expiresAt: sessionTable.expiresAt }).from(sessionTable)
+      .where(and(session, gte(sessionTable.expiresAt, expiresAt))).get()
+    if (!active) return unauthorized(c)
+  }
+
+  setCookie(c, cookie, getCookie(c, cookie)!, { ...cookieOptions, maxAge: sessionAge })
+  return c.body(null, 204)
+})
 
 sessions.delete('/current', async (c) => {
   await drizzle(c.env.DB).delete(sessionTable).where(eq(sessionTable.tokenHash, c.get('tokenHash'))).run()
