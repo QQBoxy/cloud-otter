@@ -1,9 +1,11 @@
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
+import { pages } from '../shared/pages.ts'
 import { requireSession } from './access.ts'
 import { announcements } from './announcements.ts'
 import type { WorkerEnv } from './http.ts'
 import { sessions } from './sessions.ts'
+import { transactions } from './transactions.ts'
 
 const app = new Hono<WorkerEnv>()
 
@@ -30,8 +32,11 @@ app.get('/api/health', (c) => c.json({ ok: true }))
 
 app.route('/api/sessions', sessions)
 app.route('/api/announcements', announcements)
+app.route('/api/transactions', transactions)
 
-app.get('/', (c) => asset(c, '/index.html'))
+for (const { path } of pages) {
+  app.get(path, (c) => asset(c, '/index.html'))
+}
 app.get('*', (c) => c.req.path.startsWith('/api/')
   ? c.json({ error: '找不到這個 API。' }, 404)
   : c.env.ASSETS.fetch(c.req.raw))

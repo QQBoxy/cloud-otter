@@ -1,3 +1,5 @@
+export const renewalPath = '/api/sessions/current/renewals'
+
 export async function request(path: string, method = 'GET', body?: object) {
   const response = await fetch(path, {
     method,
@@ -9,6 +11,10 @@ export async function request(path: string, method = 'GET', body?: object) {
     const message = payload && typeof payload === 'object' && 'error' in payload &&
       typeof payload.error === 'string' ? payload.error : '目前無法完成操作，請稍後再試。'
     throw new ApiError(response.status, message)
+  }
+  if (path !== '/api/health' && !path.startsWith('/api/sessions')) {
+    // A separate write records activity while keeping GET endpoints read-only.
+    void fetch(renewalPath, { method: 'POST', keepalive: true }).catch(() => {})
   }
   return response
 }

@@ -2,10 +2,10 @@ import { createApp } from 'vue'
 import 'element-plus/es/components/base/style/css'
 import './style.css'
 import './pwa.ts'
-import BoardPage from './BoardPage.vue'
+import App from './App.vue'
 
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) window.location.reload()
 })
 
-createApp(BoardPage).mount('#app')
+createApp(App).mount('#app')

@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "海獺公告欄",
-  "short_name": "海獺公告欄",
+  "name": "海獺盒子",
+  "short_name": "海獺盒子",
   "lang": "zh-Hant-TW",
   "start_url": "/",
   "scope": "/",
