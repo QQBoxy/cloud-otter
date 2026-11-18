@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElAlert, ElButton, ElEmpty, ElForm, ElFormItem, ElInput, ElPopconfirm } from 'element-plus'
 import 'element-plus/es/components/alert/style/css'
 import 'element-plus/es/components/button/style/css'
@@ -12,9 +12,11 @@ import { collection, readAnnouncements, type Announcement } from './announcement
 import { ApiError, request } from './request'
 
 const announcements = ref<Announcement[]>([])
-const draft = ref('')
-const editId = ref<number | null>(null)
-const editText = ref('')
+const newDraft = ref({ text: '' })
+const editDraft = ref<Announcement | null>(null)
+const draft = computed(() => editDraft.value ?? newDraft.value)
+const textInput = ref<InstanceType<typeof ElInput> | null>(null)
+const heading = ref<HTMLElement | null>(null)
 const busy = ref(false)
 const loaded = ref(false)
 const error = ref('')
@@ -41,23 +43,29 @@ async function run(action: () => Promise<void>) {
   }
 }
 
-function createAnnouncement() {
-  return run(async () => {
-    await request(collection, 'POST', { text: draft.value })
-    draft.value = ''
-    await load()
-  })
+async function openEdit(item: Announcement) {
+  editDraft.value = { ...item }
+  await nextTick()
+  textInput.value?.focus()
 }
 
-function beginEdit(item: Announcement) {
-  editId.value = item.id
-  editText.value = item.text
+async function closeEdit() {
+  editDraft.value = null
+  await nextTick()
+  heading.value?.focus()
 }
 
-function saveEdit(id: number) {
+function save() {
   return run(async () => {
-    await request(collection + '/' + id, 'PATCH', { text: editText.value })
-    editId.value = null
+    const editing = editDraft.value
+    const body = { text: draft.value.text }
+    if (editing) {
+      await request(collection + '/' + editing.id, 'PATCH', body)
+      await closeEdit()
+    } else {
+      await request(collection, 'POST', body)
+      newDraft.value.text = ''
+    }
     await load()
   })
 }
@@ -65,7 +73,6 @@ function saveEdit(id: number) {
 function remove(id: number) {
   return run(async () => {
     await request(collection + '/' + id, 'DELETE')
-    if (editId.value === id) editId.value = null
     await load()
   })
 }
@@ -97,25 +104,33 @@ onMounted(() => run(load))
 <template>
   <main class="page management-page">
     <header class="page-header management-heading">
-      <h1>公告</h1>
+      <h1 ref="heading" tabindex="-1">公告</h1>
     </header>
 
     <ElAlert v-if="error" :title="error" type="error" :closable="false" />
 
-    <ElForm class="panel panel-form" label-position="top" @submit.prevent="createAnnouncement">
-      <h2>新增公告</h2>
+    <ElForm class="panel panel-form" label-position="top" @submit.prevent="save">
+      <h2>{{ editDraft ? '編輯公告' : '新增公告' }}</h2>
       <ElFormItem label="公告內容" for="announcement-text">
         <ElInput
           id="announcement-text"
-          v-model="draft"
+          ref="textInput"
+          v-model="draft.text"
           type="textarea"
           :rows="3"
           :maxlength="500"
+          :disabled="busy"
           show-word-limit
         />
       </ElFormItem>
       <div class="actions">
-        <ElButton type="primary" native-type="submit" :disabled="busy || !draft.trim()">新增</ElButton>
+        <ElButton
+          type="primary"
+          native-type="submit"
+          :loading="busy"
+          :disabled="!draft.text.trim()"
+        >{{ editDraft ? '儲存' : '新增' }}</ElButton>
+        <ElButton v-if="editDraft" :disabled="busy" @click="closeEdit">取消</ElButton>
       </div>
     </ElForm>
 
@@ -136,49 +151,26 @@ onMounted(() => run(load))
         </thead>
         <tbody role="rowgroup">
           <tr v-for="(item, index) in announcements" :key="item.id" role="row">
-            <td v-if="editId === item.id" colspan="2" role="cell">
-              <ElForm class="panel-form" label-position="top" @submit.prevent="saveEdit(item.id)">
-                <h2>編輯公告</h2>
-                <ElFormItem label="公告內容" for="edit-text">
-                  <ElInput
-                    id="edit-text"
-                    v-model="editText"
-                    type="textarea"
-                    :rows="3"
-                    :maxlength="500"
-                    show-word-limit
-                  />
-                </ElFormItem>
-                <div class="actions">
-                  <ElButton type="primary" native-type="submit" :disabled="busy || !editText.trim()">
-                    儲存
-                  </ElButton>
-                  <ElButton :disabled="busy" @click="editId = null">取消</ElButton>
-                </div>
-              </ElForm>
+            <td class="announcement-text" role="cell">{{ item.text }}</td>
+            <td role="cell">
+              <div class="actions record-actions">
+                <ElButton :disabled="busy || index === 0" @click="move(index, -1)">上移</ElButton>
+                <ElButton :disabled="busy || index === announcements.length - 1" @click="move(index, 1)">
+                  下移
+                </ElButton>
+                <ElButton :disabled="busy || !!editDraft" @click="openEdit(item)">編輯</ElButton>
+                <ElPopconfirm
+                  title="確定刪除這則公告？"
+                  confirm-button-text="刪除"
+                  cancel-button-text="取消"
+                  @confirm="remove(item.id)"
+                >
+                  <template #reference>
+                    <ElButton type="danger" plain :disabled="busy || !!editDraft">刪除</ElButton>
+                  </template>
+                </ElPopconfirm>
+              </div>
             </td>
-            <template v-else>
-              <td class="announcement-text" role="cell">{{ item.text }}</td>
-              <td role="cell">
-                <div class="actions record-actions">
-                  <ElButton :disabled="busy || index === 0" @click="move(index, -1)">上移</ElButton>
-                  <ElButton :disabled="busy || index === announcements.length - 1" @click="move(index, 1)">
-                    下移
-                  </ElButton>
-                  <ElButton :disabled="busy" @click="beginEdit(item)">編輯</ElButton>
-                  <ElPopconfirm
-                    title="確定刪除這則公告？"
-                    confirm-button-text="刪除"
-                    cancel-button-text="取消"
-                    @confirm="remove(item.id)"
-                  >
-                    <template #reference>
-                      <ElButton type="danger" plain :disabled="busy">刪除</ElButton>
-                    </template>
-                  </ElPopconfirm>
-                </div>
-              </td>
-            </template>
           </tr>
         </tbody>
       </table>
