@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElAlert, ElButton, ElEmpty, ElPopconfirm } from 'element-plus'
 import 'element-plus/es/components/alert/style/css'
 import 'element-plus/es/components/button/style/css'
@@ -9,6 +9,9 @@ import { taipeiDate, TRANSACTIONS_PER_PAGE, type Transaction, type TransactionPa
 import { transactionPage, transactionTotalPage } from '../shared/pages.ts'
 import { ApiError, request } from './request'
 import { parsePrice, transactionCollection as collection } from './transactions'
+
+const props = defineProps<{ route: URL }>()
+const emit = defineEmits<{ navigate: [path: string] }>()
 
 const today = () => taipeiDate(new Date())
 const month = ref(today().slice(0, 7))
@@ -43,6 +46,8 @@ const money = new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2 })
 const dateOf = (entry: Transaction) => taipeiDate(new Date(entry.occurredAt))
 const formatMoney = (price: number) => 'NT$' + money.format(price)
 const maxMonth = computed(() => Math.max(1, ...(summary.value?.months.map((row) => row.price) ?? [])))
+let displayedRoute = props.route
+let leftLedger = false
 
 async function load(requestedPage = page.value) {
   if (view.value === 'entries') {
@@ -91,15 +96,13 @@ function periodUrl(nextView: typeof view.value, value: string) {
     : transactionPage.path + '?month=' + value
 }
 
-function readRoute() {
-  const url = new URL(window.location.href)
+function readRoute(url: URL) {
   view.value = url.pathname === transactionTotalPage.path ? 'stats' : 'entries'
   const year = url.searchParams.get('year')
   const value = view.value === 'stats'
     ? year && year + month.value.slice(4)
     : url.searchParams.get('month')
   setMonth(value && /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value) ? value : today().slice(0, 7))
-  document.title = (view.value === 'stats' ? transactionTotalPage.label : transactionPage.label) + ' · 海獺盒子'
   loadedMonth.value = ''
 }
 
@@ -113,20 +116,7 @@ function changePeriod(event: Event, unit: 'year' | 'month') {
 }
 
 function switchView(nextView: typeof view.value, value = month.value) {
-  return run(async () => {
-    window.history.pushState(null, '', periodUrl(nextView, value))
-    readRoute()
-    await load(1)
-  })
-}
-
-function handleHistory() {
-  if (busy.value) {
-    window.location.reload()
-    return
-  }
-  readRoute()
-  void run(() => load(1))
+  emit('navigate', periodUrl(nextView, value))
 }
 
 function goToPage(target: number) {
@@ -149,6 +139,8 @@ async function closeEdit() {
 
 function save() {
   return run(async () => {
+    const savedFrom = window.location.href
+    const route = props.route
     const editing = editDraft.value
     const form = draft.value
     const price = parsePrice(form.price)
@@ -167,12 +159,18 @@ function save() {
       ? await request(collection + '/' + editing.id, 'PATCH', body)
       : await request(collection, 'POST', body)
     const entry = await response.json<Transaction>()
+    if (leftLedger) return
+    if (!editing) newDraft.value = blankDraft()
+    // A completed save must not replace the URL of a different history entry.
+    if (props.route !== route || window.location.href !== savedFrom) {
+      editDraft.value = null
+      return
+    }
     const savedMonth = dateOf(entry).slice(0, 7)
     const targetPage = editing && month.value === savedMonth ? page.value : 1
     setMonth(savedMonth)
     if (!availableYears.value.includes(selectedYear.value)) availableYears.value.push(selectedYear.value)
     window.history.replaceState(null, '', periodUrl('entries', savedMonth))
-    if (!editing) newDraft.value = blankDraft()
     await closeEdit()
     loadedMonth.value = ''
     await load(targetPage)
@@ -187,19 +185,27 @@ function remove(id: number) {
   })
 }
 
-readRoute()
-onMounted(() => {
-  window.addEventListener('popstate', handleHistory)
-  return run(async () => {
-    await Promise.all([
-      load(),
-      request(collection + '/years').then(async (response) => {
-        availableYears.value = await response.json<string[]>()
-      }),
-    ])
-  })
+readRoute(displayedRoute)
+watch([() => props.route, busy], ([route, loading]) => {
+  // Apply the latest navigation once the previous ledger operation settles.
+  if (loading || route === displayedRoute) return
+  displayedRoute = route
+  readRoute(route)
+  void run(() => load(1))
 })
-onUnmounted(() => window.removeEventListener('popstate', handleHistory))
+
+onMounted(() => run(async () => {
+  const results = await Promise.allSettled([
+    load(),
+    request(collection + '/years').then(async (response) => {
+      availableYears.value = await response.json<string[]>()
+    }),
+  ])
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason
+  }
+}))
+onUnmounted(() => { leftLedger = true })
 </script>
 
 <template>
